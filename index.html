@@ -110,7 +110,7 @@
         <p style="margin-top: 10px; font-size: 10px; color: #444; max-width: 300px; text-align: center;">
             <span style="color: #666;">DIAGNOSTICS:</span><br>
             If screen stays black, ensure HTTPS.<br>
-            Using fallback grid if Camera fails.
+            System will auto-bypass sensors if they hang.
         </p>
     </div>
 
@@ -118,7 +118,7 @@
     <video id="cam-feed" autoplay playsinline muted></video>
 
     <!-- DEBUG HUD -->
-    <div id="hud">KOLPITO v2.1 (STABLE) | WAITING...</div>
+    <div id="hud">KOLPITO v2.2 (ROBUST) | WAITING...</div>
 
     <!-- THREE.JS IMPORT MAP -->
     <script type="importmap">
@@ -161,63 +161,88 @@
         const hud = document.getElementById('hud');
 
         // --- BOOT SEQUENCE ---
-        startBtn.addEventListener('click', async () => {
+        startBtn.addEventListener('click', () => {
+            // 1. Immediate UI Feedback
             statusText.innerText = "INITIALIZING CORE...";
-            startBtn.style.display = 'none'; // Prevent double click
-            
-            // Allow audio context (browser requirement)
-            try {
-                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                audioCtx.resume();
-            } catch(e) {}
+            startBtn.style.display = 'none'; 
+            hud.innerText = "STARTING UP...";
 
-            // Attempt to load hardware
-            try {
-                // 1. Motion Sensors (iOS 13+ requirement)
-                if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-                    statusText.innerText = "REQUESTING SENSORS...";
-                    const permission = await DeviceOrientationEvent.requestPermission();
-                    if (permission !== 'granted') throw new Error("Motion Denied");
+            // 2. Watchdog Timer: Force start if hardware hangs for more than 4 seconds
+            const watchdog = setTimeout(() => {
+                if (!isSystemActive) {
+                    console.warn("Hardware hang detected. Forcing start.");
+                    hud.innerText = "TIMEOUT DETECTED - FORCING SAFE MODE";
+                    statusText.innerText = "BYPASSING SENSORS...";
+                    initSystem(true); // Force safe mode
                 }
+            }, 4000);
 
-                // 2. Camera Access
-                statusText.innerText = "CONNECTING OPTICS...";
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { 
-                        facingMode: 'environment', 
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 }
-                    }, 
-                    audio: false 
-                });
-                
-                video = document.getElementById('cam-feed');
-                video.srcObject = stream;
-                // Wait for video to actually be ready
-                await new Promise((resolve) => {
-                    video.onloadedmetadata = () => {
-                        video.play().then(resolve).catch(resolve);
-                    };
-                });
+            // 3. Async Hardware Loading
+            (async () => {
+                try {
+                    // Audio Context (Browser requirement)
+                    if (window.AudioContext || window.webkitAudioContext) {
+                        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                        await ctx.resume();
+                    }
 
-                // Success Start
-                initSystem(false); 
+                    // Sensors (iOS specific)
+                    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                        statusText.innerText = "REQUESTING SENSORS...";
+                        const permission = await DeviceOrientationEvent.requestPermission();
+                        if (permission !== 'granted') throw new Error("Motion Denied");
+                    }
 
-            } catch (err) {
-                // FALLBACK MODE
-                console.warn("Hardware access failed:", err);
-                hud.innerText = "WARNING: HARDWARE RESTRICTED (" + err.name + ")";
-                statusText.innerText = "BYPASSING SENSORS...";
-                
-                // Slight delay so user sees the bypass message, then force start
-                setTimeout(() => {
-                    initSystem(true); 
-                }, 500);
-            }
+                    // Camera
+                    statusText.innerText = "CONNECTING OPTICS...";
+                    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                         throw new Error("Camera API Unavailable");
+                    }
+
+                    const stream = await navigator.mediaDevices.getUserMedia({ 
+                        video: { 
+                            facingMode: 'environment', 
+                            width: { ideal: 1280 },
+                            height: { ideal: 720 }
+                        }, 
+                        audio: false 
+                    });
+                    
+                    video = document.getElementById('cam-feed');
+                    video.srcObject = stream;
+                    
+                    // Wait for video to actually start
+                    await new Promise((resolve) => {
+                        video.onloadedmetadata = () => {
+                            video.play().then(resolve).catch(resolve);
+                        };
+                        // Fallback inside the promise if metadata hangs
+                        setTimeout(resolve, 1500); 
+                    });
+
+                    // Success - Clear watchdog and start normally
+                    clearTimeout(watchdog);
+                    if (!isSystemActive) initSystem(false); 
+
+                } catch (err) {
+                    // Handled Error - Clear watchdog and start in safe mode
+                    console.warn("Hardware access failed:", err);
+                    hud.innerText = "HARDWARE ERROR: " + err.name;
+                    statusText.innerText = "STARTING IN SAFE MODE...";
+                    
+                    clearTimeout(watchdog);
+                    if (!isSystemActive) {
+                        setTimeout(() => initSystem(true), 500);
+                    }
+                }
+            })();
         });
 
         // --- SYSTEM INITIALIZATION ---
         function initSystem(fallbackMode = false) {
+            if (isSystemActive) return; // Prevent double init
+            isSystemActive = true;
+
             // 1. Scene
             scene = new THREE.Scene();
             
@@ -244,7 +269,6 @@
                 videoTexture = new THREE.VideoTexture(video);
                 videoTexture.colorSpace = THREE.SRGBColorSpace;
                 
-                // Create a screen attached to the camera
                 const videoGeo = new THREE.PlaneGeometry(16, 9);
                 const videoMat = new THREE.MeshBasicMaterial({ map: videoTexture, depthTest: false, depthWrite: false });
                 videoMesh = new THREE.Mesh(videoGeo, videoMat);
@@ -253,30 +277,28 @@
                 camera.add(videoMesh);
                 scene.add(camera);
                 
-                hud.innerText = "SYSTEM NORMAL | AR ACTIVE";
+                hud.innerText = "SYSTEM ONLINE | AR ACTIVE";
             } else {
                 // Safe Mode (Grid)
-                scene.background = new THREE.Color(0x0a0a0a); // Dark Grey background
+                scene.background = new THREE.Color(0x0a0a0a);
                 const grid = new THREE.GridHelper(50, 50, 0x00ff00, 0x111111);
                 grid.position.y = -2;
                 scene.add(grid);
                 scene.add(camera);
                 
-                hud.innerText = "SAFE MODE | DRAG SCREEN TO LOOK";
+                hud.innerText = "SAFE MODE | DRAG TO LOOK";
             }
 
             // 6. Controls (Hybrid)
-            // If fallback or desktop, use Orbit (Touch/Mouse). If mobile AR, try Gyro.
             try {
                 if(fallbackMode) throw new Error("Force Orbit");
                 controls = new DeviceOrientationControls(camera);
                 controls.alphaOffset = 0;
             } catch(e) {
-                // Fallback to OrbitControls (Mouse/Touch swipe)
                 controls = new OrbitControls(camera, renderer.domElement);
                 controls.enableZoom = false;
                 controls.enablePan = false;
-                controls.rotateSpeed = -0.5; // Invert for "looking" feel
+                controls.rotateSpeed = -0.5;
             }
 
             // 7. UI Elements
@@ -291,7 +313,6 @@
             document.addEventListener('touchstart', onTrigger, {passive: false}); 
             document.addEventListener('click', onTrigger);
 
-            isSystemActive = true;
             animate();
             
             // Fade out boot screen
