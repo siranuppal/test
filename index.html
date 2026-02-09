@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>KOLPITO OS</title>
+    <style>
+        /* --- SYSTEM STYLES --- */
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        /* Loading / Boot Screen */
+        #boot-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            color: white;
+            transition: opacity 1s ease-out;
+        }
+
+        .logo {
+            font-size: 3rem;
+            font-weight: 200;
+            letter-spacing: 8px;
+            margin-bottom: 20px;
+            text-transform: uppercase;
+            background: linear-gradient(90deg, #fff, #888, #fff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: shimmer 3s infinite;
+        }
+
+        .status {
+            color: #666;
+            font-size: 0.9rem;
+            margin-bottom: 40px;
+            font-family: monospace;
+        }
+
+        button.boot-btn {
+            padding: 18px 45px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: white;
+            font-size: 1.1rem;
+            border-radius: 50px;
+            cursor: pointer;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            transition: all 0.3s;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        button.boot-btn:active {
+            transform: scale(0.95);
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        /* HUD Overlay */
+        #hud {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 10px;
+            z-index: 500;
+            pointer-events: none;
+            text-align: center;
+        }
+
+        /* Hidden Video Element */
+        #cam-feed {
+            display: none;
+        }
+
+        @keyframes shimmer {
+            0% { background-position: -200%; }
+            100% { background-position: 200%; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- BOOT INTERFACE -->
+    <div id="boot-screen">
+        <div class="logo">KOLPITO</div>
+        <div class="status" id="status-text">SYSTEM INITIALIZING...</div>
+        <button class="boot-btn" id="start-btn">BOOT SYSTEM</button>
+        <p style="margin-top: 20px; font-size: 10px; color: #444; max-width: 300px; text-align: center;">
+            REQUIRES HTTPS CONNECTION<br>
+            Please allow Camera and Motion Sensors when prompted.
+        </p>
+    </div>
+
+    <!-- VIDEO SOURCE -->
+    <video id="cam-feed" autoplay playsinline muted></video>
+
+    <!-- DEBUG HUD -->
+    <div id="hud">KOLPITO v1.0 | WAITING FOR INPUT</div>
+
+    <!-- THREE.JS IMPORT MAP -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <!-- MAIN SYSTEM SCRIPT -->
+    <script type="module">
+        import * as THREE from 'three';
+        import { DeviceOrientationControls } from 'three/addons/controls/DeviceOrientationControls.js';
+
+        // --- GLOBAL VARIABLES ---
+        let camera, scene, renderer;
+        let controls;
+        let video, videoTexture, videoMesh;
+        let iconGroup, cursor;
+        let raycaster;
+        let intersectedObject = null;
+        let isSystemActive = false;
+        
+        // Configuration
+        const APPS = [
+            { name: "NET", color: "#3498db", icon: "🌐" },
+            { name: "MEDIA", color: "#e74c3c", icon: "▶" },
+            { name: "FILES", color: "#f1c40f", icon: "📁" },
+            { name: "COMM", color: "#2ecc71", icon: "💬" },
+            { name: "SETTINGS", color: "#95a5a6", icon: "⚙" }
+        ];
+
+        // --- DOM ELEMENTS ---
+        const startBtn = document.getElementById('start-btn');
+        const bootScreen = document.getElementById('boot-screen');
+        const statusText = document.getElementById('status-text');
+        const hud = document.getElementById('hud');
+
+        // --- BOOT SEQUENCE ---
+        startBtn.addEventListener('click', async () => {
+            statusText.innerText = "ACCESSING NEURAL LINK...";
+            startBtn.style.display = 'none';
+
+            try {
+                // 1. Initialize Audio Context (needed for some browsers to unlock audio)
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                audioCtx.resume();
+
+                // 2. Request Motion Permissions (iOS 13+)
+                if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                    const permission = await DeviceOrientationEvent.requestPermission();
+                    if (permission !== 'granted') throw new Error("Motion Denied");
+                }
+
+                // 3. Request Camera
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { 
+                        facingMode: 'environment', // Rear camera
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    }, 
+                    audio: false 
+                });
+                
+                video = document.getElementById('cam-feed');
+                video.srcObject = stream;
+                await video.play();
+
+                // 4. Start 3D System
+                initSystem();
+                
+                // 5. Hide Boot Screen
+                bootScreen.style.opacity = 0;
+                setTimeout(() => bootScreen.style.display = 'none', 1000);
+                isSystemActive = true;
+
+            } catch (err) {
+                console.error(err);
+                statusText.innerText = "ERROR: " + err.message;
+                statusText.style.color = "red";
+                // Fallback: Start system without camera/sensors if failed
+                setTimeout(() => {
+                    initSystem(true); // true = fallback mode
+                    bootScreen.style.opacity = 0;
+                    setTimeout(() => bootScreen.style.display = 'none', 1000);
+                    isSystemActive = true;
+                }, 2000);
+            }
+        });
+
+        // --- SYSTEM INITIALIZATION ---
+        function initSystem(fallbackMode = false) {
+            // Scene Setup
+            scene = new THREE.Scene();
+
+            // Camera Setup
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
+            
+            // Renderer Setup
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = false; // Manual VR rendering
+            document.body.appendChild(renderer.domElement);
+
+            // Lighting
+            const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambient);
+            const directional = new THREE.DirectionalLight(0xffffff, 1);
+            directional.position.set(0, 10, 5);
+            scene.add(directional);
+
+            // --- 1. AR PASS-THROUGH LAYER ---
+            if (!fallbackMode && video) {
+                videoTexture = new THREE.VideoTexture(video);
+                videoTexture.colorSpace = THREE.SRGBColorSpace;
+                
+                // We attach a plane to the CAMERA, so it acts like a screen
+                // This simulates "looking through" the phone
+                const videoGeo = new THREE.PlaneGeometry(16, 9);
+                const videoMat = new THREE.MeshBasicMaterial({ map: videoTexture, depthTest: false, depthWrite: false });
+                videoMesh = new THREE.Mesh(videoGeo, videoMat);
+                
+                // Position it far back, relative to camera
+                videoMesh.position.z = -10; 
+                // Scale it to cover field of view
+                const scale = 2.5;
+                videoMesh.scale.set(scale, scale, scale);
+                
+                camera.add(videoMesh); // Lock to camera view
+                scene.add(camera); // Add camera to scene (required when children exist)
+            } else {
+                // Fallback Grid
+                const grid = new THREE.GridHelper(50, 50, 0x00ff00, 0x111111);
+                grid.position.y = -2;
+                scene.add(grid);
+                scene.background = new THREE.Color(0x050505);
+                scene.add(camera);
+            }
+
+            // --- 2. CONTROLS (GYRO) ---
+            try {
+                controls = new DeviceOrientationControls(camera);
+                controls.alphaOffset = 0; // Calibration
+            } catch(e) {
+                hud.innerText = "GYRO FAILURE - SWIPE TO LOOK";
+                // Fallback to simple mouse/touch look if needed, but for VR we need gyro.
+            }
+
+            // --- 3. KOLPITO INTERFACE ---
+            createInterface();
+
+            // --- 4. CURSOR (RETICLE) ---
+            const cursorGeo = new THREE.RingGeometry(0.02, 0.03, 32);
+            const cursorMat = new THREE.MeshBasicMaterial({ color: 0xffffff, opacity: 0.8, transparent: true, depthTest: false });
+            cursor = new THREE.Mesh(cursorGeo, cursorMat);
+            cursor.position.z = -1.5; // 1.5 meters in front
+            cursor.renderOrder = 999;
+            camera.add(cursor);
+
+            // --- 5. INTERACTION ---
+            raycaster = new THREE.Raycaster();
+            
+            // Events
+            window.addEventListener('resize', onResize);
+            document.addEventListener('touchstart', onTouch); // Tap to click
+            document.addEventListener('click', onTouch); // Click to click
+
+            animate();
+        }
+
+        function createInterface() {
+            iconGroup = new THREE.Group();
+            
+            // Layout: Semi-circle
+            const radius = 2.0;
+            const totalWidth = Math.PI / 2; // 90 degrees spread
+            const step = totalWidth / (APPS.length - 1);
+            const startAngle = -totalWidth / 2;
+
+            APPS.forEach((app, i) => {
+                const angle = startAngle + (i * step);
+                
+                const group = new THREE.Group();
+
+                // Glass Background
+                const glassGeo = new THREE.BoxGeometry(0.5, 0.5, 0.05);
+                const glassMat = new THREE.MeshPhysicalMaterial({
+                    color: 0xffffff,
+                    metalness: 0.1,
+                    roughness: 0.1,
+                    transmission: 0.9, // Glass
+                    thickness: 0.5,
+                    transparent: true,
+                    opacity: 0.6
+                });
+                const glass = new THREE.Mesh(glassGeo, glassMat);
+
+                // Icon (Text Texture)
+                const canvas = document.createElement('canvas');
+                canvas.width = 128; canvas.height = 128;
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = app.color;
+                ctx.fillRect(0,0,128,128); // Bg
+                ctx.fillStyle = "white";
+                ctx.font = "80px Arial";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(app.icon, 64, 64);
+
+                const iconTex = new THREE.CanvasTexture(canvas);
+                const iconGeo = new THREE.PlaneGeometry(0.4, 0.4);
+                const iconMat = new THREE.MeshBasicMaterial({ map: iconTex, transparent: true });
+                const iconMesh = new THREE.Mesh(iconGeo, iconMat);
+                iconMesh.position.z = 0.06; // In front of glass
+
+                // Label
+                const lblCanvas = document.createElement('canvas');
+                lblCanvas.width = 256; lblCanvas.height = 64;
+                const lCtx = lblCanvas.getContext('2d');
+                lCtx.fillStyle = "white";
+                lCtx.font = "30px Arial";
+                lCtx.textAlign = "center";
+                lCtx.fillText(app.name, 128, 40);
+                const lblTex = new THREE.CanvasTexture(lblCanvas);
+                const lblMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.125), new THREE.MeshBasicMaterial({ map: lblTex, transparent: true }));
+                lblMesh.position.y = -0.35;
+
+                group.add(glass);
+                group.add(iconMesh);
+                group.add(lblMesh);
+
+                // Position in Circle
+                group.position.set(
+                    Math.sin(angle) * radius,
+                    0,
+                    -Math.cos(angle) * radius
+                );
+                group.lookAt(0,0,0);
+                
+                // Metadata for Raycaster
+                group.userData = { id: app.name, isApp: true };
+
+                iconGroup.add(group);
+            });
+
+            scene.add(iconGroup);
+        }
+
+        // --- ANIMATION LOOP ---
+        function animate() {
+            requestAnimationFrame(animate);
+            if (!isSystemActive) return;
+
+            // 1. Update Controls (Gyro)
+            if(controls) controls.update();
+
+            // 2. Raycasting (Interaction)
+            raycaster.setFromCamera({ x: 0, y: 0 }, camera); // Center of screen
+            
+            // Get all glass boxes (first child of group)
+            const targets = [];
+            iconGroup.children.forEach(g => targets.push(g.children[0]));
+
+            const intersects = raycaster.intersectObjects(targets);
+
+            if (intersects.length > 0) {
+                const targetMesh = intersects[0].object;
+                const parentGroup = targetMesh.parent;
+
+                if (intersectedObject !== parentGroup) {
+                    // Reset old
+                    if (intersectedObject) resetAppScale(intersectedObject);
+                    
+                    // Set new
+                    intersectedObject = parentGroup;
+                    highlightApp(intersectedObject);
+                }
+            } else {
+                if (intersectedObject) {
+                    resetAppScale(intersectedObject);
+                    intersectedObject = null;
+                }
+            }
+
+            // 3. Render in Split Screen
+            renderVR();
+        }
+
+        function highlightApp(group) {
+            cursor.scale.set(1.5, 1.5, 1.5);
+            cursor.material.color.setHex(0x00ff00);
+            
+            // Tween scale manually
+            group.scale.set(1.2, 1.2, 1.2);
+            group.children[0].material.color.setHex(0xccffcc); // Tint glass green
+            hud.innerText = "HOVER: " + group.userData.id;
+        }
+
+        function resetAppScale(group) {
+            cursor.scale.set(1, 1, 1);
+            cursor.material.color.setHex(0xffffff);
+            
+            group.scale.set(1, 1, 1);
+            group.children[0].material.color.setHex(0xffffff); // Reset glass
+            hud.innerText = "KOLPITO OS";
+        }
+
+        function renderVR() {
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+
+            renderer.setScissorTest(true);
+
+            // LEFT EYE
+            renderer.setScissor(0, 0, w / 2, h);
+            renderer.setViewport(0, 0, w / 2, h);
+            renderer.render(scene, camera);
+
+            // RIGHT EYE
+            renderer.setScissor(w / 2, 0, w / 2, h);
+            renderer.setViewport(w / 2, 0, w / 2, h);
+            renderer.render(scene, camera);
+            
+            renderer.setScissorTest(false);
+        }
+
+        function onTouch() {
+            if (intersectedObject && isSystemActive) {
+                // Click Logic
+                const appName = intersectedObject.userData.id;
+                hud.innerText = "LAUNCHING " + appName + "...";
+                
+                // Animation Pop
+                intersectedObject.scale.set(0.9, 0.9, 0.9);
+                setTimeout(() => intersectedObject.scale.set(1.2, 1.2, 1.2), 150);
+                
+                // Spawn a Window (Demo)
+                spawnWindow(appName);
+            }
+        }
+
+        function spawnWindow(title) {
+            const winGroup = new THREE.Group();
+            
+            // Window Pane
+            const wGeo = new THREE.PlaneGeometry(1.5, 1);
+            const wMat = new THREE.MeshPhysicalMaterial({
+                color: 0x111111,
+                transparent: true, opacity: 0.9,
+                side: THREE.DoubleSide
+            });
+            const wMesh = new THREE.Mesh(wGeo, wMat);
+            
+            // Text
+            const canvas = document.createElement('canvas');
+            canvas.width = 512; canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = "white";
+            ctx.font = "40px Arial";
+            ctx.textAlign = "center";
+            ctx.fillText("Running: " + title, 256, 128);
+            const tex = new THREE.CanvasTexture(canvas);
+            const tMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 0.75), new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
+            tMesh.position.z = 0.01;
+
+            winGroup.add(wMesh);
+            winGroup.add(tMesh);
+
+            // Position where user is looking
+            const dir = new THREE.Vector3(0, 0, -2);
+            dir.applyQuaternion(camera.quaternion);
+            winGroup.position.copy(camera.position).add(dir);
+            winGroup.lookAt(camera.position);
+
+            scene.add(winGroup);
+
+            // Auto-close for demo
+            setTimeout(() => {
+                scene.remove(winGroup);
+                // Cleanup memory
+                wGeo.dispose(); wMat.dispose(); tex.dispose();
+            }, 3000);
+        }
+
+        function onResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+    </script>
+</body>
+</html>
