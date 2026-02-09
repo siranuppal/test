@@ -3,516 +3,566 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>KOLPITO OS</title>
+    <title>KOLPITO | Spatial Computing OS</title>
     <style>
-        /* --- SYSTEM STYLES --- */
         body {
             margin: 0;
             overflow: hidden;
             background-color: #000;
-            font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             user-select: none;
             -webkit-user-select: none;
         }
 
-        /* Loading / Boot Screen */
-        #boot-screen {
+        /* The Camera Feed Background */
+        #camera-feed {
             position: absolute;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
-            background: #050505;
+            object-fit: cover;
+            z-index: -1;
+            /* Flip horizontally if using front camera, but we want rear usually */
+        }
+
+        /* The WebGL Canvas */
+        #canvas-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+
+        /* UI Overlay for Boot/Permissions */
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
             display: flex;
             flex-direction: column;
             justify-content: center;
             align-items: center;
-            z-index: 1000;
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(20px);
             color: white;
-            transition: opacity 0.5s ease-out;
+            transition: opacity 0.5s ease;
         }
 
-        .logo {
-            font-size: 3rem;
+        h1 {
             font-weight: 200;
-            letter-spacing: 8px;
-            margin-bottom: 20px;
-            text-transform: uppercase;
-            background: linear-gradient(90deg, #fff, #888, #fff);
+            letter-spacing: 4px;
+            margin-bottom: 10px;
+            font-size: 2rem;
+            background: linear-gradient(90deg, #fff, #a0c4ff);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
-            animation: shimmer 3s infinite;
         }
 
-        .status {
-            color: #666;
+        p.status {
+            color: #888;
             font-size: 0.9rem;
-            margin-bottom: 40px;
-            font-family: monospace;
-            text-align: center;
-            padding: 0 20px;
+            margin-bottom: 30px;
         }
 
-        button.boot-btn {
-            padding: 18px 45px;
-            background: rgba(255, 255, 255, 0.1);
+        button.start-btn {
+            padding: 15px 40px;
+            border-radius: 30px;
             border: 1px solid rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.1);
             color: white;
-            font-size: 1.1rem;
-            border-radius: 50px;
+            font-size: 1rem;
             cursor: pointer;
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            transition: all 0.3s;
+            transition: all 0.3s ease;
             text-transform: uppercase;
             letter-spacing: 2px;
-            margin-bottom: 20px;
         }
 
-        button.boot-btn:active {
-            transform: scale(0.95);
-            background: rgba(255, 255, 255, 0.3);
+        button.start-btn:hover {
+            background: rgba(255, 255, 255, 0.25);
+            transform: scale(1.05);
+            box-shadow: 0 0 20px rgba(100, 200, 255, 0.4);
         }
 
-        /* HUD Overlay */
-        #hud {
+        /* Center line for VR calibration */
+        .vr-divider {
             position: absolute;
-            bottom: 20px;
             left: 50%;
-            transform: translateX(-50%);
-            color: rgba(255, 255, 255, 0.7);
-            font-size: 11px;
-            z-index: 500;
-            pointer-events: none;
-            text-align: center;
-            width: 100%;
-            text-shadow: 0px 1px 2px black;
-        }
-
-        /* Hidden Video Element */
-        #cam-feed {
+            top: 0;
+            bottom: 0;
+            width: 1px;
+            background: rgba(255, 255, 255, 0.1);
+            z-index: 5;
             display: none;
-        }
-
-        @keyframes shimmer {
-            0% { background-position: -200%; }
-            100% { background-position: 200%; }
+            pointer-events: none;
         }
     </style>
+    <!-- Three.js CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
 
-    <!-- BOOT INTERFACE -->
-    <div id="boot-screen">
-        <div class="logo">KOLPITO</div>
-        <div class="status" id="status-text">SYSTEM READY</div>
-        <button class="boot-btn" id="start-btn">BOOT SYSTEM</button>
-        <p style="margin-top: 10px; font-size: 10px; color: #444; max-width: 300px; text-align: center;">
-            <span style="color: #666;">DIAGNOSTICS:</span><br>
-            If screen stays black, ensure HTTPS.<br>
-            System will auto-bypass sensors if they hang.
-        </p>
+    <!-- Video Element for AR Pass-Through -->
+    <video id="camera-feed" autoplay playsinline muted></video>
+
+    <!-- 3D Canvas -->
+    <div id="canvas-container"></div>
+
+    <!-- VR Split Divider -->
+    <div class="vr-divider" id="vr-divider"></div>
+
+    <!-- Initial Boot Screen -->
+    <div id="ui-layer">
+        <h1>KOLPITO OS</h1>
+        <p class="status" id="status-text">Ready to Initialize Spatial Environment</p>
+        <button class="start-btn" id="start-btn">Boot System</button>
     </div>
 
-    <!-- VIDEO SOURCE -->
-    <video id="cam-feed" autoplay playsinline muted></video>
-
-    <!-- DEBUG HUD -->
-    <div id="hud">KOLPITO v2.2 (ROBUST) | WAITING...</div>
-
-    <!-- THREE.JS IMPORT MAP -->
-    <script type="importmap">
-        {
-            "imports": {
-                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
-            }
-        }
-    </script>
-
-    <!-- MAIN SYSTEM SCRIPT -->
-    <script type="module">
-        import * as THREE from 'three';
-        import { DeviceOrientationControls } from 'three/addons/controls/DeviceOrientationControls.js';
-        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    <script>
+        // --- CONFIGURATION ---
+        const CONFIG = {
+            fov: 75,
+            ipd: 0.6, // Interpupillary distance approx
+            reticleColor: 0xffffff,
+            hoverColor: 0x64b5f6,
+            iconSize: 1.2,
+            dockRadius: 8,
+            dockY: -2
+        };
 
         // --- GLOBAL VARIABLES ---
-        let camera, scene, renderer;
-        let controls;
-        let video, videoTexture, videoMesh;
-        let iconGroup, cursor;
-        let raycaster;
-        let intersectedObject = null;
-        let isSystemActive = false;
+        let scene, camera, renderer;
+        let appsGroup = new THREE.Group();
+        let windowsGroup = new THREE.Group();
+        let reticleLeft, reticleRight; // One for each eye
+        let raycaster = new THREE.Raycaster();
+        let mouse = new THREE.Vector2(0, 0); // Always center for gaze
         
-        // Configuration
-        const APPS = [
-            { name: "NET", color: "#3498db", icon: "🌐" },
-            { name: "MEDIA", color: "#e74c3c", icon: "▶" },
-            { name: "FILES", color: "#f1c40f", icon: "📁" },
-            { name: "COMM", color: "#2ecc71", icon: "💬" },
-            { name: "SETTINGS", color: "#95a5a6", icon: "⚙" }
-        ];
+        let icons = []; // Array to store icon meshes for raycasting
+        let isRunning = false;
+        
+        // Gyroscope State
+        let deviceOrientation = { alpha: 0, beta: 0, gamma: 0 };
+        let screenOrientation = 0;
 
-        // --- DOM ELEMENTS ---
-        const startBtn = document.getElementById('start-btn');
-        const bootScreen = document.getElementById('boot-screen');
-        const statusText = document.getElementById('status-text');
-        const hud = document.getElementById('hud');
+        // --- ASSET GENERATION (Procedural Textures) ---
+        
+        function createTextTexture(text, subtext, color) {
+            const size = 512;
+            const canvas = document.createElement('canvas');
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
 
-        // --- BOOT SEQUENCE ---
-        startBtn.addEventListener('click', () => {
-            // 1. Immediate UI Feedback
-            statusText.innerText = "INITIALIZING CORE...";
-            startBtn.style.display = 'none'; 
-            hud.innerText = "STARTING UP...";
+            // Glass background
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+            ctx.beginPath();
+            ctx.roundRect(20, 20, size - 40, size - 40, 60);
+            ctx.fill();
 
-            // 2. Watchdog Timer: Force start if hardware hangs for more than 4 seconds
-            const watchdog = setTimeout(() => {
-                if (!isSystemActive) {
-                    console.warn("Hardware hang detected. Forcing start.");
-                    hud.innerText = "TIMEOUT DETECTED - FORCING SAFE MODE";
-                    statusText.innerText = "BYPASSING SENSORS...";
-                    initSystem(true); // Force safe mode
-                }
-            }, 4000);
+            // Border
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+            ctx.lineWidth = 10;
+            ctx.stroke();
 
-            // 3. Async Hardware Loading
-            (async () => {
-                try {
-                    // Audio Context (Browser requirement)
-                    if (window.AudioContext || window.webkitAudioContext) {
-                        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-                        await ctx.resume();
-                    }
+            // Icon/Symbol
+            ctx.fillStyle = color;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font = 'bold 200px Arial';
+            ctx.fillText(text.substring(0, 1), size / 2, size / 2 - 20);
 
-                    // Sensors (iOS specific)
-                    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-                        statusText.innerText = "REQUESTING SENSORS...";
-                        const permission = await DeviceOrientationEvent.requestPermission();
-                        if (permission !== 'granted') throw new Error("Motion Denied");
-                    }
+            // Label
+            ctx.font = '30px Arial';
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+            ctx.fillText(subtext, size / 2, size - 80);
 
-                    // Camera
-                    statusText.innerText = "CONNECTING OPTICS...";
-                    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                         throw new Error("Camera API Unavailable");
-                    }
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.needsUpdate = true;
+            return texture;
+        }
 
-                    const stream = await navigator.mediaDevices.getUserMedia({ 
-                        video: { 
-                            facingMode: 'environment', 
-                            width: { ideal: 1280 },
-                            height: { ideal: 720 }
-                        }, 
-                        audio: false 
-                    });
-                    
-                    video = document.getElementById('cam-feed');
-                    video.srcObject = stream;
-                    
-                    // Wait for video to actually start
-                    await new Promise((resolve) => {
-                        video.onloadedmetadata = () => {
-                            video.play().then(resolve).catch(resolve);
-                        };
-                        // Fallback inside the promise if metadata hangs
-                        setTimeout(resolve, 1500); 
-                    });
+        function createWindowContent(title) {
+            const width = 1024;
+            const height = 768;
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
 
-                    // Success - Clear watchdog and start normally
-                    clearTimeout(watchdog);
-                    if (!isSystemActive) initSystem(false); 
+            // Window Chrome
+            ctx.fillStyle = 'rgba(20, 20, 30, 0.85)';
+            ctx.beginPath();
+            ctx.roundRect(0, 0, width, height, 40);
+            ctx.fill();
 
-                } catch (err) {
-                    // Handled Error - Clear watchdog and start in safe mode
-                    console.warn("Hardware access failed:", err);
-                    hud.innerText = "HARDWARE ERROR: " + err.name;
-                    statusText.innerText = "STARTING IN SAFE MODE...";
-                    
-                    clearTimeout(watchdog);
-                    if (!isSystemActive) {
-                        setTimeout(() => initSystem(true), 500);
-                    }
-                }
-            })();
-        });
+            // Header
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+            ctx.fillRect(0, 0, width, 80);
 
-        // --- SYSTEM INITIALIZATION ---
-        function initSystem(fallbackMode = false) {
-            if (isSystemActive) return; // Prevent double init
-            isSystemActive = true;
+            // Title
+            ctx.font = 'bold 40px sans-serif';
+            ctx.fillStyle = 'white';
+            ctx.textAlign = 'left';
+            ctx.fillText(title, 40, 55);
 
-            // 1. Scene
+            // Dummy Content
+            ctx.font = '30px sans-serif';
+            ctx.fillStyle = '#aaa';
+            ctx.fillText("Spatial Application Loaded.", 40, 150);
+            ctx.fillText("Gaze at content to interact.", 40, 200);
+
+            // Abstract graphics
+            ctx.fillStyle = '#334';
+            ctx.fillRect(40, 250, 400, 300);
+            ctx.fillStyle = '#343';
+            ctx.fillRect(460, 250, 400, 300);
+
+            const texture = new THREE.CanvasTexture(canvas);
+            return texture;
+        }
+
+        // --- THREE.JS SETUP ---
+
+        function init3D() {
+            const container = document.getElementById('canvas-container');
+            
             scene = new THREE.Scene();
+            // No background color, transparent so video shows through
             
-            // 2. Camera
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
-            
-            // 3. Renderer
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-            renderer.setPixelRatio(window.devicePixelRatio);
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.xr.enabled = false; 
-            document.body.appendChild(renderer.domElement);
+            camera = new THREE.PerspectiveCamera(CONFIG.fov, window.innerWidth / window.innerHeight, 0.1, 100);
+            // Initial camera pos
+            camera.position.set(0, 0, 0.1);
 
-            // 4. Lights
-            const ambient = new THREE.AmbientLight(0xffffff, 0.6);
-            scene.add(ambient);
-            const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+            renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.autoClear = false; // Important for stereo split
+            container.appendChild(renderer.domElement);
+
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+            
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
             dirLight.position.set(0, 10, 5);
             scene.add(dirLight);
 
-            // 5. Background / AR Pass-through
-            if (!fallbackMode && video) {
-                // AR Mode
-                videoTexture = new THREE.VideoTexture(video);
-                videoTexture.colorSpace = THREE.SRGBColorSpace;
-                
-                const videoGeo = new THREE.PlaneGeometry(16, 9);
-                const videoMat = new THREE.MeshBasicMaterial({ map: videoTexture, depthTest: false, depthWrite: false });
-                videoMesh = new THREE.Mesh(videoGeo, videoMat);
-                videoMesh.position.z = -10; 
-                videoMesh.scale.set(2.8, 2.8, 2.8);
-                camera.add(videoMesh);
-                scene.add(camera);
-                
-                hud.innerText = "SYSTEM ONLINE | AR ACTIVE";
-            } else {
-                // Safe Mode (Grid)
-                scene.background = new THREE.Color(0x0a0a0a);
-                const grid = new THREE.GridHelper(50, 50, 0x00ff00, 0x111111);
-                grid.position.y = -2;
-                scene.add(grid);
-                scene.add(camera);
-                
-                hud.innerText = "SAFE MODE | DRAG TO LOOK";
-            }
+            // Build UI
+            buildDock();
+            buildReticles();
 
-            // 6. Controls (Hybrid)
-            try {
-                if(fallbackMode) throw new Error("Force Orbit");
-                controls = new DeviceOrientationControls(camera);
-                controls.alphaOffset = 0;
-            } catch(e) {
-                controls = new OrbitControls(camera, renderer.domElement);
-                controls.enableZoom = false;
-                controls.enablePan = false;
-                controls.rotateSpeed = -0.5;
-            }
-
-            // 7. UI Elements
-            createInterface();
-            createCursor();
-
-            // 8. Interaction
-            raycaster = new THREE.Raycaster();
-            
-            // 9. Launch
-            window.addEventListener('resize', onResize);
-            document.addEventListener('touchstart', onTrigger, {passive: false}); 
-            document.addEventListener('click', onTrigger);
-
-            animate();
-            
-            // Fade out boot screen
-            bootScreen.style.opacity = 0;
-            setTimeout(() => bootScreen.style.display = 'none', 500);
+            // Event Listeners
+            window.addEventListener('resize', onWindowResize, false);
+            document.addEventListener('touchstart', onTouchStart, false); 
+            // Also support mouse click for desktop debugging
+            document.addEventListener('click', onTouchStart, false);
         }
 
-        function createInterface() {
-            iconGroup = new THREE.Group();
-            const radius = 2.0;
-            const totalWidth = Math.PI / 1.5; 
-            const step = totalWidth / (APPS.length - 1);
-            const startAngle = -totalWidth / 2;
+        function buildDock() {
+            scene.add(appsGroup);
 
-            APPS.forEach((app, i) => {
-                const angle = startAngle + (i * step);
-                const group = new THREE.Group();
+            const appList = [
+                { name: "S", label: "Settings", color: "#A0C4FF" },
+                { name: "B", label: "Browser", color: "#BDB2FF" },
+                { name: "P", label: "Photos", color: "#FFC6FF" },
+                { name: "M", label: "Mail", color: "#FFFFFC" },
+                { name: "F", label: "Files", color: "#CAFFBF" }
+            ];
 
-                // Glass BG
-                const glassGeo = new THREE.BoxGeometry(0.5, 0.5, 0.05);
-                const glassMat = new THREE.MeshPhysicalMaterial({
-                    color: 0xffffff, metalness: 0.1, roughness: 0.1,
-                    transmission: 0.9, thickness: 0.5, transparent: true, opacity: 0.6
+            const radius = CONFIG.dockRadius;
+            const totalArc = Math.PI / 3; // 60 degrees spread
+            const angleStep = totalArc / (appList.length - 1);
+            const startAngle = -totalArc / 2;
+
+            appList.forEach((app, i) => {
+                const geometry = new THREE.PlaneGeometry(CONFIG.iconSize, CONFIG.iconSize);
+                const texture = createTextTexture(app.name, app.label, app.color);
+                const material = new THREE.MeshBasicMaterial({ 
+                    map: texture, 
+                    transparent: true, 
+                    opacity: 0.9,
+                    side: THREE.DoubleSide
                 });
-                const glass = new THREE.Mesh(glassGeo, glassMat);
 
-                // Icon
-                const canvas = document.createElement('canvas');
-                canvas.width = 128; canvas.height = 128;
-                const ctx = canvas.getContext('2d');
-                ctx.fillStyle = app.color;
-                ctx.beginPath(); ctx.arc(64,64,64,0,Math.PI*2); ctx.fill();
-                ctx.fillStyle = "white";
-                ctx.font = "80px Arial";
-                ctx.textAlign = "center";
-                ctx.textBaseline = "middle";
-                ctx.fillText(app.icon, 64, 64);
+                const icon = new THREE.Mesh(geometry, material);
                 
-                const iconTex = new THREE.CanvasTexture(canvas);
-                const iconMesh = new THREE.Mesh(
-                    new THREE.PlaneGeometry(0.4, 0.4),
-                    new THREE.MeshBasicMaterial({ map: iconTex, transparent: true })
-                );
-                iconMesh.position.z = 0.06;
+                // Position on a curve
+                const angle = startAngle + (i * angleStep);
+                icon.position.x = radius * Math.sin(angle);
+                icon.position.z = -radius * Math.cos(angle);
+                icon.position.y = CONFIG.dockY;
+                
+                // Look at center
+                icon.lookAt(0, CONFIG.dockY, 0);
 
-                // Label
-                const lblCanvas = document.createElement('canvas');
-                lblCanvas.width = 256; lblCanvas.height = 64;
-                const lCtx = lblCanvas.getContext('2d');
-                lCtx.fillStyle = "white";
-                lCtx.font = "bold 30px Arial";
-                lCtx.textAlign = "center";
-                lCtx.shadowColor="black"; lCtx.shadowBlur=4;
-                lCtx.fillText(app.name, 128, 40);
-                const lblTex = new THREE.CanvasTexture(lblCanvas);
-                const lblMesh = new THREE.Mesh(
-                    new THREE.PlaneGeometry(0.6, 0.15),
-                    new THREE.MeshBasicMaterial({ map: lblTex, transparent: true })
-                );
-                lblMesh.position.y = -0.4;
+                // Add data for interaction
+                icon.userData = { 
+                    isIcon: true, 
+                    label: app.label,
+                    originalScale: 1
+                };
 
-                group.add(glass);
-                group.add(iconMesh);
-                group.add(lblMesh);
-                
-                // Position
-                group.position.set(Math.sin(angle)*radius, 0, -Math.cos(angle)*radius);
-                group.lookAt(0,0,0);
-                group.userData = { id: app.name };
-                
-                iconGroup.add(group);
+                appsGroup.add(icon);
+                icons.push(icon);
             });
-            scene.add(iconGroup);
-        }
-
-        function createCursor() {
-            const cursorGeo = new THREE.RingGeometry(0.02, 0.04, 32);
-            const cursorMat = new THREE.MeshBasicMaterial({ 
-                color: 0xffffff, opacity: 0.8, transparent: true, depthTest: false 
-            });
-            cursor = new THREE.Mesh(cursorGeo, cursorMat);
-            cursor.position.z = -1.5;
-            cursor.renderOrder = 999;
-            camera.add(cursor);
-        }
-
-        function animate() {
-            requestAnimationFrame(animate);
-            if (!isSystemActive) return;
-
-            // Update Controls
-            if(controls) controls.update();
-
-            // Raycasting
-            raycaster.setFromCamera({ x: 0, y: 0 }, camera);
             
-            // Check Glass Panes
-            const targets = [];
-            iconGroup.children.forEach(g => targets.push(g.children[0]));
-            const intersects = raycaster.intersectObjects(targets);
+            scene.add(windowsGroup);
+        }
+
+        function buildReticles() {
+            // We need a reticle locked to the camera's forward vector.
+            // Since we render stereo by shifting the camera, we can put the reticle 
+            // in the scene at a fixed distance, or HUD style.
+            // For true stereo depth, it's best to place a 3D object at the focal distance.
+            
+            const geometry = new THREE.RingGeometry(0.02, 0.03, 32);
+            const material = new THREE.MeshBasicMaterial({ 
+                color: CONFIG.reticleColor,
+                transparent: true,
+                opacity: 0.8,
+                depthTest: false // Always on top
+            });
+
+            // Create a reticle object that sits inside the camera hierarchy?
+            // No, in VR, reticle is usually a cursor in the world.
+            // Let's create one reticle in the scene that follows gaze orientation.
+            
+            // Actually, for this simple implementation, let's child it to the camera group wrapper
+            // But we don't have a camera wrapper yet. Let's do it in the render loop.
+            // We'll create a mesh and update its position every frame.
+            
+            reticleLeft = new THREE.Mesh(geometry, material.clone());
+            reticleRight = new THREE.Mesh(geometry, material.clone());
+            
+            // We'll manually render these on top or position them.
+            // Easiest: Child to camera.
+            camera.add(reticleLeft);
+            reticleLeft.position.set(0, 0, -2); // 2 meters in front
+            
+            // Note: In stereo rendering, childing to camera works, but might look flat.
+            // For a robust implementation, we add camera to scene.
+            scene.add(camera);
+        }
+
+        // --- INTERACTION LOGIC ---
+
+        function openWindow(title) {
+            // Close existing windows
+            while(windowsGroup.children.length > 0){ 
+                windowsGroup.remove(windowsGroup.children[0]); 
+            }
+
+            const geometry = new THREE.PlaneGeometry(4, 3);
+            const texture = createWindowContent(title);
+            const material = new THREE.MeshBasicMaterial({ 
+                map: texture, 
+                transparent: true,
+                side: THREE.DoubleSide 
+            });
+            
+            const win = new THREE.Mesh(geometry, material);
+            
+            // Place window in front of user relative to current gaze
+            const forward = new THREE.Vector3(0, 0, -1);
+            forward.applyQuaternion(camera.quaternion);
+            
+            // Position it 4 units away
+            win.position.copy(camera.position).add(forward.multiplyScalar(4));
+            
+            // Make it face the camera
+            win.lookAt(camera.position);
+            
+            windowsGroup.add(win);
+        }
+
+        function onTouchStart() {
+            if (!isRunning) return;
+
+            // Trigger raycast interaction
+            // Since reticle is always center screen
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(icons);
 
             if (intersects.length > 0) {
-                const targetGroup = intersects[0].object.parent;
-                if (intersectedObject !== targetGroup) {
-                    if (intersectedObject) resetApp(intersectedObject);
-                    intersectedObject = targetGroup;
-                    highlightApp(intersectedObject);
+                const hit = intersects[0].object;
+                if (hit.userData.isIcon) {
+                    // Animate click
+                    hit.scale.set(1.1, 1.1, 1.1);
+                    setTimeout(() => hit.scale.set(1, 1, 1), 150);
+                    openWindow(hit.userData.label);
                 }
             } else {
-                if (intersectedObject) {
-                    resetApp(intersectedObject);
-                    intersectedObject = null;
+                // If clicked empty space, close windows
+                // windowsGroup.clear(); // Not supported in older Three.js
+                while(windowsGroup.children.length > 0){ 
+                    windowsGroup.remove(windowsGroup.children[0]); 
                 }
             }
-
-            renderVR();
         }
 
-        function highlightApp(group) {
-            cursor.scale.set(1.5, 1.5, 1.5);
-            cursor.material.color.setHex(0x00ff00);
-            group.scale.set(1.2, 1.2, 1.2);
-            hud.innerText = "SELECTED: " + group.userData.id;
+        // --- CORE LOOP ---
+
+        function updateOrientation() {
+            if (!deviceOrientation) return;
+
+            // Convert device orientation to quaternion
+            // This is a simplified math version. For production, use THREE.DeviceOrientationControls
+            // But we want single file, so we map manually or use a simple approx.
+            
+            const alpha = deviceOrientation.alpha ? THREE.Math.degToRad(deviceOrientation.alpha) : 0; // Z
+            const beta = deviceOrientation.beta ? THREE.Math.degToRad(deviceOrientation.beta) : 0; // X
+            const gamma = deviceOrientation.gamma ? THREE.Math.degToRad(deviceOrientation.gamma) : 0; // Y
+            const orient = screenOrientation ? THREE.Math.degToRad(screenOrientation) : 0;
+
+            const euler = new THREE.Euler(beta, alpha, -gamma, 'YXZ');
+            const q = new THREE.Quaternion();
+            q.setFromEuler(euler);
+            
+            // Fix for screen orientation (landscape)
+            const q_rot = new THREE.Quaternion();
+            q_rot.setFromAxisAngle(new THREE.Vector3(0, 0, 1), -orient);
+            
+            // Adjustment for initial look
+            const q_fix = new THREE.Quaternion();
+            q_fix.setFromAxisAngle( new THREE.Vector3( 1, 0, 0 ), -Math.PI / 2 );
+
+            // Combine (Order matters)
+            camera.quaternion.copy(q);
+            camera.quaternion.multiply(q_fix); // Rotate up to look at horizon
+            camera.quaternion.multiply(q_rot); // Fix landscape
         }
 
-        function resetApp(group) {
-            cursor.scale.set(1, 1, 1);
-            cursor.material.color.setHex(0xffffff);
-            group.scale.set(1, 1, 1);
-            hud.innerText = "KOLPITO OS";
-        }
+        function render() {
+            requestAnimationFrame(render);
 
-        function renderVR() {
-            const w = window.innerWidth;
-            const h = window.innerHeight;
+            updateOrientation();
+
+            // Raycast for Hover Effects
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(icons);
+            
+            // Reset all scales
+            icons.forEach(icon => {
+                icon.scale.lerp(new THREE.Vector3(1, 1, 1), 0.1);
+            });
+
+            // Apply hover
+            if (intersects.length > 0) {
+                const hit = intersects[0].object;
+                hit.scale.lerp(new THREE.Vector3(1.3, 1.3, 1.3), 0.2);
+            }
+
+            // STEREOSCOPIC RENDER
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+
             renderer.setScissorTest(true);
+
+            // 1. LEFT EYE
+            renderer.setScissor(0, 0, width / 2, height);
+            renderer.setViewport(0, 0, width / 2, height);
             
-            // Left
-            renderer.setScissor(0, 0, w/2, h);
-            renderer.setViewport(0, 0, w/2, h);
+            // Shift camera left
+            camera.position.x = -CONFIG.ipd / 2;
+            camera.updateMatrixWorld();
+            renderer.render(scene, camera);
+
+            // 2. RIGHT EYE
+            renderer.setScissor(width / 2, 0, width / 2, height);
+            renderer.setViewport(width / 2, 0, width / 2, height);
+            
+            // Shift camera right
+            camera.position.x = CONFIG.ipd / 2;
+            camera.updateMatrixWorld();
             renderer.render(scene, camera);
             
-            // Right
-            renderer.setScissor(w/2, 0, w/2, h);
-            renderer.setViewport(w/2, 0, w/2, h);
-            renderer.render(scene, camera);
+            // Reset camera pos for logic calculations next frame
+            camera.position.x = 0;
             
             renderer.setScissorTest(false);
         }
 
-        function onTrigger(e) {
-            if (e.type === 'touchstart') e.preventDefault(); // Prevent ghost clicks
-            
-            if (intersectedObject && isSystemActive) {
-                const appName = intersectedObject.userData.id;
-                hud.innerText = "LAUNCHING " + appName;
-                spawnWindow(appName);
-            }
-        }
-
-        function spawnWindow(title) {
-            const winGroup = new THREE.Group();
-            
-            // Window Background
-            const wGeo = new THREE.PlaneGeometry(1.5, 1);
-            const wMat = new THREE.MeshPhysicalMaterial({
-                color: 0x222222, transparent: true, opacity: 0.95, side: THREE.DoubleSide
-            });
-            const wMesh = new THREE.Mesh(wGeo, wMat);
-            
-            // Text
-            const canvas = document.createElement('canvas');
-            canvas.width = 512; canvas.height = 256;
-            const ctx = canvas.getContext('2d');
-            ctx.fillStyle = "white";
-            ctx.font = "40px Arial";
-            ctx.textAlign = "center";
-            ctx.fillText("ACTIVE APP: " + title, 256, 128);
-            
-            const tex = new THREE.CanvasTexture(canvas);
-            const tMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 0.75), new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
-            tMesh.position.z = 0.01;
-
-            winGroup.add(wMesh);
-            winGroup.add(tMesh);
-
-            const dir = new THREE.Vector3(0, 0, -2);
-            dir.applyQuaternion(camera.quaternion);
-            winGroup.position.copy(camera.position).add(dir);
-            winGroup.lookAt(camera.position);
-
-            scene.add(winGroup);
-            setTimeout(() => { scene.remove(winGroup); }, 3000);
-        }
-
-        function onResize() {
+        function onWindowResize() {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
         }
+
+        // --- BOOT SEQUENCE ---
+
+        const btn = document.getElementById('start-btn');
+        const status = document.getElementById('status-text');
+        const ui = document.getElementById('ui-layer');
+        const video = document.getElementById('camera-feed');
+        const divider = document.getElementById('vr-divider');
+
+        btn.addEventListener('click', async () => {
+            status.innerText = "Initializing Sensors & Camera...";
+
+            // 1. Request Camera
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: 'environment' } 
+                });
+                video.srcObject = stream;
+            } catch (e) {
+                console.warn("Camera failed: " + e);
+                status.innerText = "Camera Access Denied (AR Disabled)";
+            }
+
+            // 2. Request Device Orientation (iOS 13+)
+            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                try {
+                    const response = await DeviceOrientationEvent.requestPermission();
+                    if (response === 'granted') {
+                        startSystem();
+                    } else {
+                        status.innerText = "Gyroscope Denied.";
+                        return;
+                    }
+                } catch (e) {
+                    status.innerText = "Sensor Error: " + e;
+                    return;
+                }
+            } else {
+                // Non-iOS 13+ devices
+                startSystem();
+            }
+        });
+
+        function startSystem() {
+            // Hide UI
+            ui.style.opacity = 0;
+            setTimeout(() => ui.style.display = 'none', 500);
+            
+            // Show Split Divider
+            divider.style.display = 'block';
+
+            // Start Orientation Listener
+            window.addEventListener('deviceorientation', (e) => {
+                deviceOrientation = e;
+            });
+            window.addEventListener('orientationchange', () => {
+                screenOrientation = window.orientation || 0;
+            });
+
+            // Init 3D
+            init3D();
+            isRunning = true;
+            render();
+
+            // Force fullscreen
+            if (document.documentElement.requestFullscreen) {
+                document.documentElement.requestFullscreen();
+            }
+        }
+
     </script>
 </body>
 </html>
